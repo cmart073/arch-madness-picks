@@ -1,0 +1,17 @@
+name = "arch-madness-picks"
+pages_build_output_dir = "public"
+compatibility_date = "2025-01-01"
+
+# ──────────────────────────────────────────────────────────────
+# KV Namespace — create with: wrangler kv namespace create PICKS_KV
+# Then paste the returned id values below
+# ──────────────────────────────────────────────────────────────
+[[kv_namespaces]]
+binding     = "PICKS_KV"
+id          = "7f0583c57c8e43c89c2b0a01c2f201ed"
+preview_id  = "7de3df1b91634f479cbe05a152a99d28"
+
+# ──────────────────────────────────────────────────────────────
+# ADMIN_PASSWORD — set via secret (NOT here):
+#   wrangler pages secret put ADMIN_PASSWORD
+# ──────────────────────────────────────────────────────────────

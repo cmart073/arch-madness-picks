@@ -3,18 +3,19 @@
 // ============================================================
 
 const LOCK_TIME = new Date('2026-03-05T21:30:00Z'); // 3:30pm CT = 9:30pm UTC
+const MAX_BRACKETS_PER_USER = 2;
 
 const GAMES = [
-  { id: 'g1',  round: 1, label: 'Game 1',       teams: ['siu', 'drake'],          feedsInto: 'g4' },
-  { id: 'g2',  round: 1, label: 'Game 2',       teams: ['valpo', 'indstate'],      feedsInto: 'g6' },
-  { id: 'g3',  round: 1, label: 'Game 3',       teams: ['uni', 'evansville'],      feedsInto: 'g7' },
-  { id: 'g4',  round: 2, label: 'Game 4',       teams: ['belmont', 'W:g1'],        feedsInto: 'g8' },
-  { id: 'g5',  round: 2, label: 'Game 5',       teams: ['murraystate', 'uic'],     feedsInto: 'g8' },
-  { id: 'g6',  round: 2, label: 'Game 6',       teams: ['bradley', 'W:g2'],        feedsInto: 'g9' },
-  { id: 'g7',  round: 2, label: 'Game 7',       teams: ['illstate', 'W:g3'],       feedsInto: 'g9' },
-  { id: 'g8',  round: 3, label: 'Semifinal 1',  teams: ['W:g4', 'W:g5'],           feedsInto: 'g10' },
-  { id: 'g9',  round: 3, label: 'Semifinal 2',  teams: ['W:g6', 'W:g7'],           feedsInto: 'g10' },
-  { id: 'g10', round: 4, label: 'Championship', teams: ['W:g8', 'W:g9'],           feedsInto: null },
+  { id: 'g1',  round: 1, label: 'Game 1',       teams: ['siu', 'drake'],         feedsInto: 'g4'  },
+  { id: 'g2',  round: 1, label: 'Game 2',       teams: ['valpo', 'indstate'],    feedsInto: 'g6'  },
+  { id: 'g3',  round: 1, label: 'Game 3',       teams: ['uni', 'evansville'],    feedsInto: 'g7'  },
+  { id: 'g4',  round: 2, label: 'Game 4',       teams: ['belmont', 'W:g1'],      feedsInto: 'g8'  },
+  { id: 'g5',  round: 2, label: 'Game 5',       teams: ['murraystate', 'uic'],   feedsInto: 'g8'  },
+  { id: 'g6',  round: 2, label: 'Game 6',       teams: ['bradley', 'W:g2'],      feedsInto: 'g9'  },
+  { id: 'g7',  round: 2, label: 'Game 7',       teams: ['illstate', 'W:g3'],     feedsInto: 'g9'  },
+  { id: 'g8',  round: 3, label: 'Semifinal 1',  teams: ['W:g4', 'W:g5'],         feedsInto: 'g10' },
+  { id: 'g9',  round: 3, label: 'Semifinal 2',  teams: ['W:g6', 'W:g7'],         feedsInto: 'g10' },
+  { id: 'g10', round: 4, label: 'Championship', teams: ['W:g8', 'W:g9'],         feedsInto: null  },
 ];
 
 const POINTS = { 1: 1, 2: 2, 3: 4, 4: 8 };
@@ -37,10 +38,7 @@ function randomToken() {
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-store',
-    },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
 }
 
@@ -49,7 +47,7 @@ function isLocked() {
 }
 
 async function getUsername(env, request) {
-  const auth = request.headers.get('Authorization') || '';
+  const auth  = request.headers.get('Authorization') || '';
   const token = auth.replace('Bearer ', '').trim();
   if (!token) return null;
   return await env.PICKS_KV.get(`session:${token}`);
@@ -58,7 +56,7 @@ async function getUsername(env, request) {
 function calcScore(userPicks, results) {
   if (!results?.games) return 0;
   return GAMES.reduce((total, game) => {
-    const pick = userPicks?.games?.[game.id];
+    const pick   = userPicks?.games?.[game.id];
     const result = results.games[game.id];
     return total + (pick && result && pick === result ? POINTS[game.round] : 0);
   }, 0);
@@ -82,7 +80,6 @@ async function handleRegister(request, env) {
 
   const token = randomToken();
   await env.PICKS_KV.put(`session:${token}`, username.toLowerCase(), { expirationTtl: 86400 * 14 });
-
   return json({ token, username });
 }
 
@@ -99,7 +96,6 @@ async function handleLogin(request, env) {
 
   const token = randomToken();
   await env.PICKS_KV.put(`session:${token}`, username.toLowerCase(), { expirationTtl: 86400 * 14 });
-
   return json({ token, username: user.username });
 }
 
@@ -114,53 +110,81 @@ async function handleSubmitPicks(request, env) {
   for (const game of GAMES) {
     if (!games?.[game.id]) return json({ error: `Missing pick for ${game.label}` }, 400);
   }
+
   if (champScore == null || isNaN(Number(champScore)) || Number(champScore) < 0 || Number(champScore) > 500) {
     return json({ error: 'Invalid championship score prediction (0–500)' }, 400);
   }
 
-  await env.PICKS_KV.put(`picks:${username}`, JSON.stringify({
+  // Check existing brackets — once submitted a slot is LOCKED, no edits
+  const b1 = await env.PICKS_KV.get(`picks:${username}:1`);
+  const b2 = await env.PICKS_KV.get(`picks:${username}:2`);
+
+  if (b1 && b2) {
+    return json({ error: `You've already submitted both brackets. Max ${MAX_BRACKETS_PER_USER} per person — no changes allowed.` }, 403);
+  }
+
+  const slot = b1 ? 2 : 1;
+
+  await env.PICKS_KV.put(`picks:${username}:${slot}`, JSON.stringify({
+    username,
+    slot,
     games,
     champScore: Math.round(Number(champScore)),
     submittedAt: new Date().toISOString(),
   }));
 
-  return json({ success: true });
+  const remaining = slot === 1 ? 1 : 0;
+  return json({ success: true, slot, remaining });
 }
 
 async function handleGetMyPicks(request, env) {
   const username = await getUsername(env, request);
   if (!username) return json({ error: 'Not authenticated' }, 401);
 
-  const picksJson = await env.PICKS_KV.get(`picks:${username}`);
-  return json({ picks: picksJson ? JSON.parse(picksJson) : null });
+  const b1json = await env.PICKS_KV.get(`picks:${username}:1`);
+  const b2json = await env.PICKS_KV.get(`picks:${username}:2`);
+  const count  = (b1json ? 1 : 0) + (b2json ? 1 : 0);
+
+  return json({
+    brackets:  [b1json ? JSON.parse(b1json) : null, b2json ? JSON.parse(b2json) : null],
+    count,
+    remaining: MAX_BRACKETS_PER_USER - count,
+    locked:    isLocked(),
+  });
 }
 
 async function handleGetLeaderboard(env) {
   const resultsJson = await env.PICKS_KV.get('results');
-  const results = resultsJson ? JSON.parse(resultsJson) : null;
-  const locked = isLocked();
+  const results     = resultsJson ? JSON.parse(resultsJson) : null;
+  const locked      = isLocked();
 
-  const keys = await env.PICKS_KV.list({ prefix: 'picks:' });
+  const keys        = await env.PICKS_KV.list({ prefix: 'picks:' });
   const leaderboard = [];
 
   for (const { name } of keys.keys) {
-    const username = name.replace('picks:', '');
+    const parts = name.split(':'); // picks : username : slot
+    if (parts.length !== 3) continue;
+
     const picksJson = await env.PICKS_KV.get(name);
     if (!picksJson) continue;
     const picks = JSON.parse(picksJson);
 
-    const score = calcScore(picks, results);
-    const champDiff =
-      results?.champScore != null && picks.champScore != null
-        ? Math.abs(picks.champScore - results.champScore)
-        : null;
+    const score     = calcScore(picks, results);
+    const champDiff = results?.champScore != null && picks.champScore != null
+      ? Math.abs(picks.champScore - results.champScore)
+      : null;
+
+    // Slot 1 shows as "username", slot 2 shows as "username (2)"
+    const displayName = picks.slot === 2 ? `${picks.username} (2)` : picks.username;
 
     leaderboard.push({
-      username,
+      username:    picks.username,
+      displayName,
+      slot:        picks.slot,
       score,
-      champScore: locked ? picks.champScore : null,
+      champScore:  locked ? picks.champScore : null,
       champDiff,
-      picks: locked ? picks.games : null,
+      picks:       locked ? picks.games : null,
       submittedAt: picks.submittedAt,
     });
   }
@@ -185,9 +209,9 @@ async function handleSetResults(request, env) {
   }
 
   await env.PICKS_KV.put('results', JSON.stringify({
-    games: games || {},
+    games:      games || {},
     champScore: champScore != null ? Math.round(Number(champScore)) : null,
-    updatedAt: new Date().toISOString(),
+    updatedAt:  new Date().toISOString(),
   }));
 
   return json({ success: true });
@@ -197,7 +221,7 @@ async function handleGetResults(env) {
   const resultsJson = await env.PICKS_KV.get('results');
   return json({
     results: resultsJson ? JSON.parse(resultsJson) : null,
-    locked: isLocked(),
+    locked:  isLocked(),
   });
 }
 
@@ -207,13 +231,11 @@ async function handleGetResults(env) {
 
 export async function onRequest(context) {
   const { request, env } = context;
-  const url = new URL(request.url);
-  const path = url.pathname;
+  const url    = new URL(request.url);
+  const path   = url.pathname;
   const method = request.method;
 
-  if (method === 'OPTIONS') {
-    return new Response(null, { status: 204 });
-  }
+  if (method === 'OPTIONS') return new Response(null, { status: 204 });
 
   try {
     if (path === '/api/register'    && method === 'POST') return handleRegister(request, env);
@@ -223,7 +245,6 @@ export async function onRequest(context) {
     if (path === '/api/leaderboard' && method === 'GET')  return handleGetLeaderboard(env);
     if (path === '/api/results'     && method === 'POST') return handleSetResults(request, env);
     if (path === '/api/results'     && method === 'GET')  return handleGetResults(env);
-
     return json({ error: 'Not found' }, 404);
   } catch (err) {
     console.error(err);

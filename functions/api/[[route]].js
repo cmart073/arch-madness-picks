@@ -105,7 +105,7 @@ async function handleSubmitPicks(request, env) {
   if (isLocked()) return json({ error: 'Bracket is locked — tournament has started!' }, 403);
 
   const body = await request.json().catch(() => ({}));
-  const { games, champScore } = body;
+  const { games, champScore, slot: requestedSlot } = body;
 
   for (const game of GAMES) {
     if (!games?.[game.id]) return json({ error: `Missing pick for ${game.label}` }, 400);
@@ -115,26 +115,44 @@ async function handleSubmitPicks(request, env) {
     return json({ error: 'Invalid championship score prediction (0–500)' }, 400);
   }
 
-  // Check existing brackets — once submitted a slot is LOCKED, no edits
   const b1 = await env.PICKS_KV.get(`picks:${username}:1`);
   const b2 = await env.PICKS_KV.get(`picks:${username}:2`);
 
-  if (b1 && b2) {
-    return json({ error: `You've already submitted both brackets. Max ${MAX_BRACKETS_PER_USER} per person — no changes allowed.` }, 403);
+  // Determine which slot to write to
+  // - If client specifies a slot, use it (editing existing bracket)
+  // - If slot 2 requested but slot 1 doesn't exist yet, reject
+  // - If both slots taken and a new slot is requested, reject
+  let slot;
+  if (requestedSlot === 2) {
+    if (!b1) return json({ error: 'Submit Bracket 1 before Bracket 2' }, 400);
+    slot = 2;
+  } else if (requestedSlot === 1) {
+    slot = 1;
+  } else {
+    // No slot specified — assign next available
+    if (!b1) slot = 1;
+    else if (!b2) slot = 2;
+    else return json({ error: `You've already submitted both brackets. Max ${MAX_BRACKETS_PER_USER} per person.` }, 403);
   }
 
-  const slot = b1 ? 2 : 1;
+  // Preserve original submittedAt if this is an edit, record updatedAt
+  const existing = slot === 1 ? b1 : b2;
+  const existingData = existing ? JSON.parse(existing) : null;
 
   await env.PICKS_KV.put(`picks:${username}:${slot}`, JSON.stringify({
     username,
     slot,
     games,
-    champScore: Math.round(Number(champScore)),
-    submittedAt: new Date().toISOString(),
+    champScore:  Math.round(Number(champScore)),
+    submittedAt: existingData?.submittedAt ?? new Date().toISOString(),
+    updatedAt:   new Date().toISOString(),
   }));
 
-  const remaining = slot === 1 ? 1 : 0;
-  return json({ success: true, slot, remaining });
+  const b1After = slot === 1 ? true : !!b1;
+  const b2After = slot === 2 ? true : !!b2;
+  const remaining = MAX_BRACKETS_PER_USER - (b1After ? 1 : 0) - (b2After ? 1 : 0);
+
+  return json({ success: true, slot, remaining, updated: !!existingData });
 }
 
 async function handleGetMyPicks(request, env) {

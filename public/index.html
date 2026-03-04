@@ -505,16 +505,18 @@ function renderBracketTabs() {
   let html = '';
 
   // Bracket 1 tab
+  const b0status = b0.submitted ? (S.locked ? '🔒 Locked' : '✓ Saved') : '';
   const cls0 = `btab ${S.activeBracket === 0 ? 'active' : ''} ${b0.submitted ? 'submitted' : ''}`;
   html += `<div class="${cls0}" onclick="switchBracket(0)">
-    Bracket 1 ${b0.submitted ? '<span class="btab-locked">🔒 Locked</span>' : ''}
+    Bracket 1 ${b0status ? `<span class="btab-locked">${b0status}</span>` : ''}
   </div>`;
 
-  // Bracket 2 tab — only show if bracket 1 is submitted OR both are shown
+  // Bracket 2 tab — only show if bracket 1 is submitted
   if (b0.submitted || b1.submitted) {
+    const b1status = b1.submitted ? (S.locked ? '🔒 Locked' : '✓ Saved') : '';
     const cls1 = `btab ${S.activeBracket === 1 ? 'active' : ''} ${b1.submitted ? 'submitted' : ''}`;
     html += `<div class="${cls1}" onclick="switchBracket(1)">
-      Bracket 2 ${b1.submitted ? '<span class="btab-locked">🔒 Locked</span>' : ''}
+      Bracket 2 ${b1status ? `<span class="btab-locked">${b1status}</span>` : ''}
     </div>`;
   }
 
@@ -571,7 +573,7 @@ function cascadeClear(gameId) {
 
 function renderBracket() {
   const ab       = AB();
-  const isLocked = S.locked || ab.submitted;
+  const isLocked = S.locked; // only tournament lock disables picks, NOT submission status
 
   document.getElementById('bracketRounds').innerHTML = ROUNDS.map(round =>
     `<div class="round-section">
@@ -584,19 +586,21 @@ function renderBracket() {
   ).join('');
 
   document.getElementById('lockedBanner').style.display = S.locked ? 'flex' : 'none';
-  document.getElementById('champBox').style.opacity     = isLocked ? '.65' : '1';
-  document.getElementById('champScoreInput').disabled   = isLocked;
-  document.getElementById('submitBar').style.display    = (S.locked || ab.submitted) ? 'none' : 'flex';
+  document.getElementById('champBox').style.opacity     = S.locked ? '.65' : '1';
+  document.getElementById('champScoreInput').disabled   = S.locked;
+  document.getElementById('submitBar').style.display    = S.locked ? 'none' : 'flex';
 
-  // Show submitted badge inside champ box if locked
+  // Remove any stale inline badge
   const existingBadge = document.getElementById('submittedInline');
   if (existingBadge) existingBadge.remove();
+
+  // Soft "saved" indicator — not a lock warning
   if (ab.submitted && !S.locked) {
     const badge = document.createElement('div');
     badge.id = 'submittedInline';
     badge.className = 'alert alert-success';
     badge.style.marginTop = '12px';
-    badge.innerHTML = `✅ Bracket ${S.activeBracket + 1} is locked in permanently. ${S.remaining > 0 ? 'Switch to Bracket 2 to submit another.' : 'Both brackets submitted!'}`;
+    badge.innerHTML = `✅ Bracket ${S.activeBracket + 1} saved — you can still edit until Thu Mar 5, 3:30p CT.`;
     document.getElementById('champBox').after(badge);
   }
 }
@@ -664,8 +668,10 @@ function updateProgress() {
   document.getElementById('progressFill').style.width = `${pct}%`;
 
   const btn = document.getElementById('submitBtn');
-  btn.disabled    = !allDone || S.locked || ab.submitted;
-  btn.textContent = `Lock In Bracket ${S.activeBracket + 1}`;
+  btn.disabled    = !allDone || S.locked;
+  btn.textContent = ab.submitted
+    ? `Update Bracket ${S.activeBracket + 1}`
+    : `Submit Bracket ${S.activeBracket + 1}`;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -679,32 +685,32 @@ async function submitPicks() {
   const done = GAMES.filter(g => ab.picks[g.id]).length;
   if (done < GAMES.length) { alert(`Please pick all ${GAMES.length} games first (${done}/${GAMES.length} done)`); return; }
 
-  const slotNum = S.activeBracket + 1;
-  const confirm = window.confirm(`⚠️ Lock in Bracket ${slotNum}?\n\nThis cannot be changed after submission!`);
-  if (!confirm) return;
+  const slotNum  = S.activeBracket + 1;
+  const isUpdate = ab.submitted;
 
   const btn = document.getElementById('submitBtn');
-  btn.disabled = true; btn.textContent = 'Submitting…';
+  btn.disabled = true; btn.textContent = isUpdate ? 'Updating…' : 'Submitting…';
 
   try {
-    const r = await api('/api/picks', 'POST', { games: { ...ab.picks }, champScore: parseInt(csVal) });
+    const r = await api('/api/picks', 'POST', { games: { ...ab.picks }, champScore: parseInt(csVal), slot: slotNum });
     if (r.error) {
       alert(r.error);
       btn.disabled = false;
       updateProgress();
     } else {
-      ab.submitted    = true;
-      S.remaining     = r.remaining;
+      ab.submitted = true;
+      S.remaining  = r.remaining;
       renderBracketTabs();
       renderBracket();
       updateProgress();
 
-      if (r.remaining > 0) {
-        const goNext = window.confirm(`✅ Bracket ${r.slot} locked in!\n\nYou have 1 bracket remaining. Switch to Bracket 2 now?`);
+      if (!isUpdate && r.remaining > 0) {
+        const goNext = window.confirm(`✅ Bracket ${r.slot} saved!\n\nYou have 1 bracket remaining. Switch to Bracket 2 now?`);
         if (goNext) switchBracket(1);
-      } else {
-        alert('🎉 Both brackets locked in! Good luck!');
+      } else if (!isUpdate) {
+        alert('🎉 Both brackets saved! You can still edit them until tip-off Thu Mar 5 at 3:30p CT.');
       }
+      // Silent success on updates — no alert needed
     }
   } catch(e) {
     alert('Network error — please try again');

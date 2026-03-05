@@ -220,11 +220,9 @@ async function handleGetLeaderboard(env) {
 
 async function handleSetResults(request, env) {
   const body = await request.json().catch(() => ({}));
-  const { adminPassword, games, champScore } = body;
+  const { games, champScore } = body;
 
-  if (!adminPassword || adminPassword !== env.ADMIN_PASSWORD) {
-    return json({ error: 'Invalid admin password' }, 403);
-  }
+  // Auth handled by Cloudflare Access at the edge — no password needed here
 
   await env.PICKS_KV.put('results', JSON.stringify({
     games:      games || {},

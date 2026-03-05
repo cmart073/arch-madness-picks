@@ -356,13 +356,9 @@
           <input type="number" id="adminChampScore" class="admin-text-input" placeholder="e.g. 138" style="width:140px;">
         </div>
       </div>
-      <div class="admin-card">
-        <h3>🔑 Admin Authentication</h3>
-        <input type="password" id="adminPwd" class="admin-text-input" placeholder="Admin password">
-        <div style="margin-top:14px;display:flex;align-items:center;gap:12px;">
-          <button class="btn btn-primary" onclick="saveResults()">Save Results</button>
-          <span id="adminMsg" style="font-size:.83rem;"></span>
-        </div>
+      <div style="margin-top:4px;display:flex;align-items:center;gap:12px;">
+        <button class="btn btn-primary" onclick="saveResults()">Save Results</button>
+        <span id="adminMsg" style="font-size:.83rem;"></span>
       </div>
     </div>
   </div>
@@ -957,15 +953,12 @@ function initAdminPanel() {
 }
 
 async function saveResults() {
-  const pwd = document.getElementById('adminPwd').value;
-  if (!pwd) { setAdminMsg('Enter admin password', 'red'); return; }
-
   const games = {};
   for (const game of GAMES) { const v = document.getElementById(`ar-${game.id}`)?.value; if (v) games[game.id] = v; }
   const cs = document.getElementById('adminChampScore').value;
 
   try {
-    const r = await api('/api/results', 'POST', { adminPassword: pwd, games, champScore: cs ? parseInt(cs) : null });
+    const r = await api('/api/results', 'POST', { games, champScore: cs ? parseInt(cs) : null });
     if (r.error) { setAdminMsg(r.error, 'red'); }
     else { S.results = { games, champScore: cs ? parseInt(cs) : null }; setAdminMsg('✓ Results saved!', 'green'); }
   } catch(e) { setAdminMsg('Network error', 'red'); }
